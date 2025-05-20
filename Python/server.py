@@ -32,7 +32,7 @@ class Config:
     # Updated topic
     MQTT_TOPICS = os.getenv("MQTT_TOPICS", "sensors/all/room1,sensors/all/garage").split(",")
     MQTT_QOS = int(os.getenv("MQTT_QOS", 0))
-    MQTT_CA_CERT = os.getenv("MQTT_CA_CERT", "C:\\Users\\taith\\Downloads\\emqxsl-ca.crt")
+    MQTT_CA_CERT = os.getenv("MQTT_CA_CERT", "emqxsl-ca.crt")
 
     # InfluxDB Configuration
     INFLUXDB_URL = os.getenv("INFLUXDB_URL", "https://us-east-1-1.aws.cloud2.influxdata.com")
@@ -223,7 +223,7 @@ class EMQXToInfluxDB:
             logger.error(f"Error querying InfluxDB for {measurement} history: {e}")
             return []
 
-    def start_api_server(self, host='0.0.0.0', port=5000):
+    def start_api_server(self, host='0.0.0.0', port=int(os.getenv("PORT", 5000))):
         """
         Start a Flask API server to serve historical data
         """
