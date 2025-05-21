@@ -1,8 +1,9 @@
-
 import logging
 import os
 import json
 import time
+import base64
+import tempfile
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
@@ -20,6 +21,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Create Flask app
+app = Flask(__name__)
+CORS(app)
 
 # Configuration
 class Config:
@@ -29,18 +33,34 @@ class Config:
     MQTT_USERNAME = os.getenv("MQTT_USERNAME", "thanhtai")
     MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "thanhtai")
     MQTT_CLIENT_ID = os.getenv("MQTT_CLIENT_ID", f"python-mqtt-{int(time.time())}")
-    # Updated topic
     MQTT_TOPICS = os.getenv("MQTT_TOPICS", "sensors/all/room1,sensors/all/garage").split(",")
     MQTT_QOS = int(os.getenv("MQTT_QOS", 0))
-    MQTT_CA_CERT = os.getenv("MQTT_CA_CERT", "emqxsl-ca.crt")
-
+    
+    # Get CA certificate from environment variable
+    CA_CERT_BASE64 = os.getenv("MQTT_CA_CERT_BASE64")
+    
     # InfluxDB Configuration
     INFLUXDB_URL = os.getenv("INFLUXDB_URL", "https://us-east-1-1.aws.cloud2.influxdata.com")
-    INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN",
-                               "_8nfCZ3FNhXZKoexUIQVQG10wVg7Hkmq6ZbAEEE2-NMwHfC-bX3xofJEaySvgAF5mEr30Ba_TqLaKZQUcYs78Q==")
+    INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN", "_8nfCZ3FNhXZKoexUIQVQG10wVg7Hkmq6ZbAEEE2-NMwHfC-bX3xofJEaySvgAF5mEr30Ba_TqLaKZQUcYs78Q==")
     INFLUXDB_ORG = os.getenv("INFLUXDB_ORG", "Embeded")
     INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET", "DHT11")
-
+    
+    @classmethod
+    def get_ca_cert_path(cls):
+        if not cls.CA_CERT_BASE64:
+            return None
+            
+        # Create a temporary file for the CA certificate
+        temp_cert = tempfile.NamedTemporaryFile(delete=False, suffix='.crt')
+        try:
+            # Decode and write the certificate
+            cert_content = base64.b64decode(cls.CA_CERT_BASE64)
+            temp_cert.write(cert_content)
+            temp_cert.close()
+            return temp_cert.name
+        except Exception as e:
+            logger.error(f"Error creating CA certificate file: {e}")
+            return None
 
 class EMQXToInfluxDB:
     def __init__(self, config: Config):
@@ -59,9 +79,15 @@ class EMQXToInfluxDB:
             self.mqtt_client.on_message = self.on_message
             self.mqtt_client.on_disconnect = self.on_disconnect
 
-            # Enable TLS/SSL with CA certificate
-            self.mqtt_client.tls_set(ca_certs=self.config.MQTT_CA_CERT)
-            self.mqtt_client.tls_insecure_set(False)
+            # Get CA certificate path
+            ca_cert_path = self.config.get_ca_cert_path()
+            if ca_cert_path:
+                # Enable TLS/SSL with CA certificate
+                self.mqtt_client.tls_set(ca_certs=ca_cert_path)
+                self.mqtt_client.tls_insecure_set(False)
+            else:
+                logger.warning("No CA certificate provided, using insecure connection")
+                self.mqtt_client.tls_insecure_set(True)
 
             if self.config.MQTT_USERNAME and self.config.MQTT_PASSWORD:
                 self.mqtt_client.username_pw_set(self.config.MQTT_USERNAME, self.config.MQTT_PASSWORD)
@@ -223,13 +249,10 @@ class EMQXToInfluxDB:
             logger.error(f"Error querying InfluxDB for {measurement} history: {e}")
             return []
 
-    def start_api_server(self, host='0.0.0.0', port=int(os.getenv("PORT", 5000))):
+    def start_api_server(self, host='0.0.0.0', port=5000):
         """
         Start a Flask API server to serve historical data
         """
-        app = Flask(__name__)
-        CORS(app)  # Enable CORS for all routes
-
         @app.route('/api/temperature/history', methods=['GET'])
         def temperature_history():
             hours = request.args.get('hours', default=24, type=int)
