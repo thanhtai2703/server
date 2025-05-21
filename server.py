@@ -48,6 +48,36 @@ class Config:
 emqx_instance = None
 
 
+def initialize_emqx():
+    global emqx_instance
+    if emqx_instance is None:
+        try:
+            config = Config()
+            emqx_instance = EMQXToInfluxDB(config)
+
+            # Set up MQTT and InfluxDB connections
+            if not emqx_instance.setup_mqtt() or not emqx_instance.setup_influxdb():
+                logger.error("Failed to set up connections.")
+                return False
+
+            # Start MQTT client loop in a separate thread
+            mqtt_thread = threading.Thread(target=emqx_instance.mqtt_client.loop_forever)
+            mqtt_thread.daemon = True
+            mqtt_thread.start()
+            logger.info("EMQX instance initialized successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize EMQX instance: {e}")
+            return False
+    return True
+
+
+# Initialize when the app starts
+@app.before_request
+def before_first_request():
+    initialize_emqx()
+
+
 class EMQXToInfluxDB:
     def __init__(self, config: Config):
         self.config = config
@@ -239,7 +269,7 @@ class EMQXToInfluxDB:
 # Flask routes
 @app.route('/api/temperature/history', methods=['GET'])
 def temperature_history():
-    if emqx_instance is None:
+    if emqx_instance is None and not initialize_emqx():
         return jsonify({'error': 'Server not initialized'}), 500
     hours = request.args.get('hours', default=24, type=int)
     location = request.args.get('location', default=None, type=str)
@@ -249,7 +279,7 @@ def temperature_history():
 
 @app.route('/api/humidity/history', methods=['GET'])
 def humidity_history():
-    if emqx_instance is None:
+    if emqx_instance is None and not initialize_emqx():
         return jsonify({'error': 'Server not initialized'}), 500
     hours = request.args.get('hours', default=24, type=int)
     location = request.args.get('location', default=None, type=str)
@@ -266,7 +296,7 @@ def get_locations():
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    if emqx_instance is None:
+    if emqx_instance is None and not initialize_emqx():
         return jsonify({'status': 'error', 'message': 'Server not initialized'}), 500
 
     status = {
@@ -278,22 +308,9 @@ def health_check():
 
 
 def main():
-    global emqx_instance
-    config = Config()
-    emqx_instance = EMQXToInfluxDB(config)
-
-    # Set up MQTT and InfluxDB connections
-    if not emqx_instance.setup_mqtt() or not emqx_instance.setup_influxdb():
-        logger.error("Failed to set up connections. Exiting...")
-        return
-
-    # Start MQTT client loop in a separate thread
-    mqtt_thread = threading.Thread(target=emqx_instance.mqtt_client.loop_forever)
-    mqtt_thread.daemon = True
-    mqtt_thread.start()
-
-    # Start the API server
-    emqx_instance.start_api_server()
+    if initialize_emqx():
+        # Start the API server
+        app.run(host='0.0.0.0', port=5000)
 
 
 if __name__ == '__main__':
