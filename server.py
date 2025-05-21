@@ -2,8 +2,6 @@ import logging
 import os
 import json
 import time
-import base64
-import tempfile
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
@@ -21,7 +19,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create Flask app
 app = Flask(__name__)
 CORS(app)
 
@@ -33,34 +30,18 @@ class Config:
     MQTT_USERNAME = os.getenv("MQTT_USERNAME", "thanhtai")
     MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "thanhtai")
     MQTT_CLIENT_ID = os.getenv("MQTT_CLIENT_ID", f"python-mqtt-{int(time.time())}")
+    # Updated topic
     MQTT_TOPICS = os.getenv("MQTT_TOPICS", "sensors/all/room1,sensors/all/garage").split(",")
     MQTT_QOS = int(os.getenv("MQTT_QOS", 0))
-    
-    # Get CA certificate from environment variable
-    CA_CERT_BASE64 = os.getenv("MQTT_CA_CERT_BASE64")
-    
+    MQTT_CA_CERT = os.getenv("MQTT_CA_CERT", "emqxsl-ca.crt")
+
     # InfluxDB Configuration
     INFLUXDB_URL = os.getenv("INFLUXDB_URL", "https://us-east-1-1.aws.cloud2.influxdata.com")
-    INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN", "_8nfCZ3FNhXZKoexUIQVQG10wVg7Hkmq6ZbAEEE2-NMwHfC-bX3xofJEaySvgAF5mEr30Ba_TqLaKZQUcYs78Q==")
+    INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN",
+                               "_8nfCZ3FNhXZKoexUIQVQG10wVg7Hkmq6ZbAEEE2-NMwHfC-bX3xofJEaySvgAF5mEr30Ba_TqLaKZQUcYs78Q==")
     INFLUXDB_ORG = os.getenv("INFLUXDB_ORG", "Embeded")
     INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET", "DHT11")
-    
-    @classmethod
-    def get_ca_cert_path(cls):
-        if not cls.CA_CERT_BASE64:
-            return None
-            
-        # Create a temporary file for the CA certificate
-        temp_cert = tempfile.NamedTemporaryFile(delete=False, suffix='.crt')
-        try:
-            # Decode and write the certificate
-            cert_content = base64.b64decode(cls.CA_CERT_BASE64)
-            temp_cert.write(cert_content)
-            temp_cert.close()
-            return temp_cert.name
-        except Exception as e:
-            logger.error(f"Error creating CA certificate file: {e}")
-            return None
+
 
 class EMQXToInfluxDB:
     def __init__(self, config: Config):
@@ -79,15 +60,9 @@ class EMQXToInfluxDB:
             self.mqtt_client.on_message = self.on_message
             self.mqtt_client.on_disconnect = self.on_disconnect
 
-            # Get CA certificate path
-            ca_cert_path = self.config.get_ca_cert_path()
-            if ca_cert_path:
-                # Enable TLS/SSL with CA certificate
-                self.mqtt_client.tls_set(ca_certs=ca_cert_path)
-                self.mqtt_client.tls_insecure_set(False)
-            else:
-                logger.warning("No CA certificate provided, using insecure connection")
-                self.mqtt_client.tls_insecure_set(True)
+            # Enable TLS/SSL with CA certificate
+            self.mqtt_client.tls_set(ca_certs=self.config.MQTT_CA_CERT)
+            self.mqtt_client.tls_insecure_set(False)
 
             if self.config.MQTT_USERNAME and self.config.MQTT_PASSWORD:
                 self.mqtt_client.username_pw_set(self.config.MQTT_USERNAME, self.config.MQTT_PASSWORD)
